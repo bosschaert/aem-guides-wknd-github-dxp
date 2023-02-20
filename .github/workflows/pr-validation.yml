@@ -163,6 +163,7 @@ jobs:
           aio aem:rde:install -t dispatcher-config "${DISP_FILE}"
       - name: Wait for Deployment
         run: |
+          sleep 30
           aio aem rde status
   lh-quality-gate:
     name: Lighthouse Test
