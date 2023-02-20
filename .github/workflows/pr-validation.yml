@@ -39,7 +39,7 @@ jobs:
           action: "create"
           environmentName: rde-pr#${{ github.event.number }}
           IMSCONFIG: ${{ secrets.AEM_CM_INTEGRATION }}
-          PROGRAMID: 95403
+          PROGRAMID: ${{ vars.AEM_PROGRAM_ID }}
       - name: Find Comment
         uses: peter-evans/find-comment@v2
         id: fc
@@ -136,8 +136,8 @@ jobs:
           echo "$AEM_CM_INTEGRATION" > .aio.config.json
           aio config:set ims.contexts.aio-cli-plugin-cloudmanager .aio.config.json --file --json
           aio auth login --ctx=aio-cli-plugin-cloudmanager
-          aio config:set cloudmanager_orgid "907136ED5D35CBF50A495CD4@AdobeOrg"
-          aio config:set cloudmanager_programid 95403
+          aio config:set cloudmanager_orgid "${{ vars.AEM_ORG_ID }}"
+          aio config:set cloudmanager_programid ${{ vars.AEM_PROGRAM_ID }}
           ENVIRONMENT_ID=$(aio cloudmanager:list-environments | grep rde | grep "${ENVIRONMENT_NAME}" |awk '{print $1}')
           echo "Detected ENVIRONMENT_ID=${ENVIRONMENT_ID}"
           aio config:set cloudmanager_environmentid "${ENVIRONMENT_ID}"
@@ -163,6 +163,7 @@ jobs:
           aio aem:rde:install -t dispatcher-config "${DISP_FILE}"
       - name: Wait for Deployment
         run: |
+          sleep 30
           aio aem rde status
   lh-quality-gate:
     name: Lighthouse Test
@@ -177,7 +178,7 @@ jobs:
           EAAS_ENV: "prod"
           IMS_URL: "https://ims-na1.adobelogin.com"
           EAAS_API_ENDPOINT: "https://evergreen.adobe.io"
-          programId: "95403"
+          programId: '${{ vars.AEM_PROGRAM_ID }}'
           environmentId: "${{ needs.create-env.outputs.environmentId }}"
         run: |
           # Install EAAS CLI

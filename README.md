@@ -17,6 +17,8 @@ A corresponding [tutorial is available](https://experienceleague.adobe.com/docs/
 
 ## How to use/install
 
+
+
 ### AEM as a Cloud Service
 
 To deploy WKND to AEM as a Cloud Service, this project's source code must be deployed to AEM via Cloud Manager. 
@@ -26,6 +28,8 @@ To deploy WKND to AEM as a Cloud Service, this project's source code must be dep
 3. Ensure a deployment pipline is configured to deploy the target branch/repo to the desired AEM as a Cloud Service env
 4. Run the Cloud Manager pipeline
 5. WKND will not be deployed to the target AEM as a Cloud Service environment
+
+
 
 ### Local development (AEM 6.5 or AEM SDK)
 
@@ -83,6 +87,7 @@ Many of the images in the WKND Reference website are from Adobe Stock and are Th
 With Adobe Stock, you have access to more than 140 million high-quality, royalty-free images including photos, graphics, videos and templates to jumpstart your creative projects.
 
 ## Documentation
+
 
 * This project was generated using the [AEM Project Archetype](https://experienceleague.adobe.com/docs/experience-manager-core-components/using/developing/archetype/overview.html).
 * This project relies on [AEM Core Components](https://experienceleague.adobe.com/docs/experience-manager-core-components/using/introduction.html).
