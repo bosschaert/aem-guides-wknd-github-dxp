@@ -1,0 +1,20 @@
+name: Cleanup on PR closing
+
+# only trigger on pull request closed events
+on:
+  pull_request:
+    types: [ closed ]
+
+
+jobs:
+  cleanup_job:
+    runs-on: ubuntu-latest
+    name: Cleanup on PR closing
+    steps:
+    - name: Delete Validation Environment
+      uses: adobe-basel/aio-cloudmanager-rde-action@v0.0.7-alpha
+      with:
+        action: "delete"
+        environmentName: rde-pr#${{ github.event.number }}
+        IMSCONFIG: ${{ secrets.AEM_CM_INTEGRATION }}
+        PROGRAMID: 95403

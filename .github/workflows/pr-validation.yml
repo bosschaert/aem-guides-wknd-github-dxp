@@ -1,0 +1,359 @@
+name: AEM CS PR Validator
+
+on:
+  #  push:
+  #    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+
+
+
+
+
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# this is needed for adding a commit annotation with the results. Likely a more fine-grained approach works. See https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#permissions
+permissions: write-all
+jobs:
+  create-env:
+    name: Prepare Environment
+    runs-on: ubuntu-latest
+    outputs:
+      tenantId: ${{ steps.create-env.outputs.tenantId }}
+      programId: ${{ steps.create-env.outputs.programId }}
+      programName: ${{ steps.create-env.outputs.programName }}
+      environmentId: ${{ steps.create-env.outputs.environmentId }}
+      environmentName: ${{ steps.create-env.outputs.environmentName }}
+      authorUrl: ${{ steps.create-env.outputs.authorUrl }}
+      publishUrl: ${{ steps.create-env.outputs.publishUrl }}
+      adminPassword: ${{ steps.create-env.outputs.adminPassword }}
+    if: contains(github.event.pull_request.labels.*.name, 'RDE')
+    steps:
+      - name: Create RDE
+        id: create-env
+        uses: adobe-basel/aio-cloudmanager-rde-action@v0.0.10-alpha
+        with:
+          action: "create"
+          environmentName: rde-pr#${{ github.event.number }}
+          IMSCONFIG: ${{ secrets.AEM_CM_INTEGRATION }}
+          PROGRAMID: 95403
+      - name: Find Comment
+        uses: peter-evans/find-comment@v2
+        id: fc
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: 'AEM CS PR Validator'
+          body-includes: 🔗 This PR is linked to the dedicated RDE Validation Environment `${{ steps.create-env.outputs.environmentName }}` / `${{ steps.create-env.outputs.environmentId }}`.
+      - name: Create or update comment
+        uses: peter-evans/create-or-update-comment@v2
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            🔗 This PR is linked to the dedicated RDE Validation Environment `${{ steps.create-env.outputs.environmentName }}` / `${{ steps.create-env.outputs.environmentId }}`.
+
+            :pushpin: Useful Links:
+
+            - ✏️ [Author️](${{ steps.create-env.outputs.authorUrl }}) 
+            - :rocket: [Publish](${{ steps.create-env.outputs.publishUrl }}) 
+            - :hammer: [Developer Console](${{ steps.create-env.outputs.developerConsoleUrl }})
+            - :floppy_disk: [Manage Environment](${{ steps.create-env.outputs.manageEnvironmentUrl }})
+
+            :crystal_ball: All commits to the PR branch will be automatically deployed to the environment.
+            
+            :boom: The environment will be automatically deleted when the PR is closed (with or without merging).
+          edit-mode: replace
+  build-maven:
+    runs-on: ubuntu-latest
+    name: Build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Restore Maven Repository Cache
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: m-${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Restore NPM Repository Cache
+        uses: actions/cache@v3
+        id: npm-cache # use this to check for `cache-hit` ==> if: steps.npm-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.npm
+          key: m-${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v3
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      - name: Build with Maven
+        run: mvn clean package
+
+      - name: Upload Bundles
+        uses: actions/upload-artifact@v3
+        with:
+          name: aem-rde-bundle
+          path: |
+            all/target/*.zip
+      - name: Upload Dispatcher Config
+        uses: actions/upload-artifact@v3
+        with:
+          name: aem-dispatcher-bundle
+          path: |
+            dispatcher/target/*.zip
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.head_ref || github.run_id }}
+      cancel-in-progress: true
+    environment:
+      name: 'rde-pr#${{ github.event.number }}'
+      url: ${{ needs.create-env.outputs.publishUrl }}
+    needs: [ create-env, build-maven ]
+    steps:
+      - name: Prepare
+        run: |
+          npm install -g @adobe/aio-cli
+          aio plugins:install @adobe/aio-cli-plugin-cloudmanager
+          aio plugins:install @adobe/aio-cli-plugin-aem-rde
+          aio plugins:update
+      - name: Login
+        env:
+          AEM_CM_INTEGRATION: '${{ secrets.AEM_CM_INTEGRATION }}'
+          ENVIRONMENT_NAME: 'rde-pr#${{ github.event.number }}'
+        run: |
+          echo "$AEM_CM_INTEGRATION" > .aio.config.json
+          aio config:set ims.contexts.aio-cli-plugin-cloudmanager .aio.config.json --file --json
+          aio auth login --ctx=aio-cli-plugin-cloudmanager
+          aio config:set cloudmanager_orgid "907136ED5D35CBF50A495CD4@AdobeOrg"
+          aio config:set cloudmanager_programid 95403
+          ENVIRONMENT_ID=$(aio cloudmanager:list-environments | grep rde | grep "${ENVIRONMENT_NAME}" |awk '{print $1}')
+          echo "Detected ENVIRONMENT_ID=${ENVIRONMENT_ID}"
+          aio config:set cloudmanager_environmentid "${ENVIRONMENT_ID}"
+          aio aem rde status
+      - name: Download Bundles
+        uses: actions/download-artifact@v3
+        with:
+          name: aem-rde-bundle
+          path: aem-rde-bundle
+      - name: Download Dispatcher Config
+        uses: actions/download-artifact@v3
+        with:
+          name: aem-dispatcher-bundle
+          path: aem-dispatcher-bundle
+      - name: Deploy Bundles
+        run: |
+          
+          ALL_FILE=$(ls aem-rde-bundle/*.zip)
+          aio aem:rde:install -t content-package "${ALL_FILE}"
+      - name: Deploy Dispatcher Config
+        run: |
+          DISP_FILE=$(ls aem-dispatcher-bundle/*.zip)
+          aio aem:rde:install -t dispatcher-config "${DISP_FILE}"
+      - name: Wait for Deployment
+        run: |
+          aio aem rde status
+  lh-quality-gate:
+    name: Lighthouse Test
+    runs-on: ubuntu-latest
+#    if: contains(github.event.pull_request.labels.*.name, 'RDE')
+    needs: [ deploy, create-env ]
+    steps:
+      - name: Prepare
+        env:
+          AEM_CM_INTEGRATION: '${{ secrets.AEM_CM_INTEGRATION }}'
+          IT_TASK_TIMEOUT: "9000"
+          EAAS_ENV: "prod"
+          IMS_URL: "https://ims-na1.adobelogin.com"
+          EAAS_API_ENDPOINT: "https://evergreen.adobe.io"
+          programId: "95403"
+          environmentId: "${{ needs.create-env.outputs.environmentId }}"
+        run: |
+          # Install EAAS CLI
+          curl https://github.com/andresbott/aem-guides-wknd/releases/download/poc-eaas/eaas-0.4.4 -L --output eaas
+          
+          chmod a+x eaas
+          
+          ./eaas -v
+          echo "EAAS Downloaded"
+          
+          JWT_ISSUER=$(echo "${AEM_CM_INTEGRATION}" | jq -r '.ims_org_id')
+          JWT_CLIENT_ID=$(echo "${AEM_CM_INTEGRATION}" | jq -r '.client_id')
+          JWT_CLIENT_SECRET=$(echo "${AEM_CM_INTEGRATION}" | jq -r '.client_secret')
+          JWT_SUBJECT=$(echo "${AEM_CM_INTEGRATION}" | jq -r '.technical_account_id')
+          
+          #write the private key to a file
+          echo "${AEM_CM_INTEGRATION}" | jq -r '.private_key' > private.key
+          
+          
+          
+          # Login integration
+          ./eaas --eaasenv "${EAAS_ENV}" login integration --imsUrl "${IMS_URL}" --organization "${JWT_ISSUER}" --clientId "${JWT_CLIENT_ID}" --secret "${JWT_CLIENT_SECRET}" --privateKey private.key --accountId "${JWT_SUBJECT}"
+          
+          ./eaas health
+          
+          # Generate a sample IT Task payload template
+          ./eaas generate lh-task-payload
+          
+          adminPassword="hunter2"
+          
+          # Fill the artifact, author, publish url and the adminPassword for each in the template file
+          sed -i'' -e "s/groupId:test-module-artifactId:version/com.adobe.cq.cloud:com.adobe.cq.cloud.testing.it.smoke:0.14.8-4f7653d/g ;
+              s/https:\/\/author-skyline:port/https:\/\/author-p${programId}-e${environmentId}.adobeaemcloud.com/g ;
+              s/https:\/\/publish-skyline:port/https:\/\/publish-p${programId}-e${environmentId}.adobeaemcloud.com/g ;
+              s/homepage//g ;
+              s/authorPV\\$\\$/${adminPassword}/g ;
+              s/publishPV\\$\\$/${adminPassword}/g ;
+              " lh-task-payload.json
+      - name: Launch Quality Gate Check
+        run: |
+          # Start the LH Task
+          ./eaas -eaasenv prod start lh-task -f lh-task-payload.json | tee task.out
+          task_id="$(cat task.out | grep "Id:" | awk -F':' '{print $2}' | xargs)"
+          if [[ "${task_id}" == "" ]]; then
+            echo "::error Error invoking Quality Gate Service"
+            exit 1
+          fi
+          echo "Task ID: ${task_id}"
+          echo "task_id=${task_id}" >> $GITHUB_ENV
+      - name: Wait for Check to complete
+        run: |
+          echo "##[group]Waiting for the check to complete"
+          IT_TASK_TIMEOUT=300
+          start_time="$(date +%s)"
+          status_file="taskId-${task_id}.status"
+          while true; do
+          ./eaas -eaasenv prod status lh-task --taskId ${task_id} | tee "${status_file}"
+          test_status="$(cat "${status_file}" | grep "Status:" | awk -F':' '{print $2}' | xargs )"
+          
+          echo "Polling status: ${test_status}"
+          
+          nowSeconds=$(date +%s)
+          elapsedSeconds=$((nowSeconds - start_time))
+          # echo "Elapsed time: ${elapsedSeconds} seconds"
+          # echo "Timeout ${IT_TASK_TIMEOUT} seconds"
+          if (( elapsedSeconds > IT_TASK_TIMEOUT )); then
+           echo "Task ${task_id} timed out after ${elapsedSeconds} seconds"
+           exit 1;
+           break
+          
+          fi
+          if [[ "${test_status}" == "terminated" || "${test_status}" == "failed" ]]; then
+           echo "Task ${task_id} finished with status ${test_status}"
+           break
+          fi
+          sleep 20
+          done
+          
+          echo "##[endgroup]"
+          
+          # Populate results
+          #test_passed="$(cat "${status_file}" | grep "Tests passed:" | awk -F':' '{print $2}' | xargs )"
+          test_passed=$test_status
+          
+          echo "Gate Check ${task_id} finished with status passed=${test_passed}" >> $GITHUB_STEP_SUMMARY
+          echo ""
+          echo "Detailed result:" >> $GITHUB_STEP_SUMMARY
+          #          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          cat "${status_file}" >> $GITHUB_STEP_SUMMARY
+          #      echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${test_passed}" == "terminated" ]]; then
+          exit 0;
+          else
+          echo "::error Quality Gate failed."
+          exit 1;
+          fi
+
+#  product-tests:
+#    name: Product Test
+#    runs-on: ubuntu-latest
+#    needs: [ deploy ]
+#    steps:
+#      - shell: bash
+#        run: |
+#          echo "product tests"
+#  security:
+#    name: Security Test
+#    runs-on: ubuntu-latest
+#    needs: [ deploy ]
+#    steps:
+#      - shell: bash
+#        run: |
+#          echo "security tests"
+#  ui:
+#    name: UI Test
+#    runs-on: ubuntu-latest
+#    needs: [ deploy ]
+#    steps:
+#      - shell: bash
+#        run: |
+#          echo "security tests"
+  build:
+    name: Code Quality Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Restore Maven Repository Cache
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+      - name: Restore NPM Repository Cache
+        uses: actions/cache@v3
+        id: npm-cache # use this to check for `cache-hit` ==> if: steps.npm-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+      - name: Code Quality Scan
+        uses: addnab/docker-run-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+          registry: cmpl0va80ctrg0dev.azurecr.io
+          image: cmpl0va80ctrg0dev.azurecr.io/self-service-build:2023.1.0
+          # see list of options at https://git.corp.adobe.com/experience-platform/self-service-aem-app-build
+          # add skipped_tests to the list of SONARQUBE_METRICS to skip all of them
+          options: >
+            --memory 10G
+            --cpus 2
+            -e REPOSITORY_URL=/mnt/git
+            -e BUILD_TRANSFORM_ENABLED=false
+            -e SKIP_SCAN=false
+            -e SKIP_VERSIONING=true
+            -e SKIP_DISPATCHER_OPTIMIZER_TOOL_SCAN=false
+            -e SKIP_TAGGING=true
+            -e SKIP_CHANGELOG_GENERATION=false
+            -e SONARQUBE_METRICS=duplicated_lines_density,security_rating,reliability_rating,open_issues,coverage,sqale_rating,cloud_service_compatibility_issues
+            -v /home/runner/.m2/repository:/root/.m2/repository
+            -v /home/runner/.npm:/root/.npm
+            -v ${{ github.workspace }}:/mnt/git
+            -v ${{ github.workspace }}/target:/mnt/artifacts/
+          run: |
+            /opt/cm/run.sh
+
+      - name: Upload build.json artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: build.json File
+          path: ${{ github.workspace }}/target/build.json
+
+
+
+
