@@ -29,6 +29,8 @@ To deploy WKND to AEM as a Cloud Service, this project's source code must be dep
 4. Run the Cloud Manager pipeline
 5. WKND will not be deployed to the target AEM as a Cloud Service environment
 
+
+
 ### Local development (AEM 6.5 or AEM SDK)
 
 Pre-compiled AEM packages are available under the latest release for easy installation on local environments using [CRX Package Manager](http://localhost:4502/crx/packmgr/index.jsp)
