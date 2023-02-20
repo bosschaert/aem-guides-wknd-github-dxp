@@ -39,7 +39,7 @@ jobs:
           action: "create"
           environmentName: rde-pr#${{ github.event.number }}
           IMSCONFIG: ${{ secrets.AEM_CM_INTEGRATION }}
-          PROGRAMID: ${{ secrets.AEM_PROGRAM_ID }}
+          PROGRAMID: ${{ vars.AEM_PROGRAM_ID }}
       - name: Find Comment
         uses: peter-evans/find-comment@v2
         id: fc
