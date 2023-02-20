@@ -163,8 +163,18 @@ jobs:
           aio aem:rde:install -t dispatcher-config "${DISP_FILE}"
       - name: Wait for Deployment
         run: |
-          sleep 30
-          aio aem rde status
+          #aio aem rde status
+          while true; do
+              output=$(aio aem rde status)
+              if [[ $output == *"deploying"* ]]; then
+                  echo "RDE is still deploying"
+                  sleep 10
+              else
+                  echo "RDE is done deploying"
+                  aio aem rde status
+                  exit 0
+              fi
+          done
   lh-quality-gate:
     name: Lighthouse Test
     runs-on: ubuntu-latest
